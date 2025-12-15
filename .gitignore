@@ -1,0 +1,44 @@
+# Build artifacts
+build/
+Urban_Perception
+*.o
+*.a
+
+# Model files
+*.engine
+*.wts
+*.pt
+*.onnx
+
+# Video files
+*.mp4
+*.avi
+*.mov
+
+# Result images
+result_*.jpg
+result_*.png
+
+# Backup files
+*copy.cpp
+*copy.h
+*.bak
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System
+.DS_Store
+*~
+
+# Docker
+.dockerignore
