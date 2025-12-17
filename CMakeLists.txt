@@ -11,7 +11,7 @@ link_directories(/usr/local/cuda/lib64)
 include_directories(/usr/include/aarch64-linux-gnu)
 link_directories(/usr/lib/aarch64-linux-gnu)
 
-add_executable(Urban_Perception source/main.cpp)
+add_executable(Urban_Perception source/main.cpp source/Yolov5Detector.cpp)
 
 target_link_libraries(Urban_Perception
     ${OpenCV_LIBS}

@@ -53,11 +53,7 @@ int main(int argc, char** argv) {
             break;
         }
 
-        frame_count++;
-        // float progress = (float)frame_count / total_frames * 100.0f;
-        // std::cout << "\rProgress: " << (int)progress << "%" << std::flush;
-
-        std::vector<Detection> result = detector.detect(frame);
+        std::vector<Detection> result = detector.detector(frame);
 
         for (const auto& det : result)
         {
