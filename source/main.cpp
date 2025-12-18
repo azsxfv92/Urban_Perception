@@ -1,9 +1,11 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include "Yolov5Detector.h"
+#include <chrono>
 
 
 int main(int argc, char** argv) {
+
     if (argc < 3)
     {
         std::cerr << "How to use :./Ur" << std::endl;
@@ -53,7 +55,14 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // time measurement
+        auto start = std::chrono::high_resolution_clock::now();
+
         std::vector<Detection> result = detector.detector(frame);
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+
 
         for (const auto& det : result)
         {
@@ -69,14 +78,15 @@ int main(int argc, char** argv) {
         writer.write(frame);
         frame_count++;
         if (frame_count % 30 == 0) {
-            std::cout << "Processing frame: " << frame_count << std::endl;
+            std::cout << "Processing frame : " << frame_count
+                      << "| Time : " << duration << "ms"
+                      << "| FPS " << (duration > 0 ? 1000.0 / duration : 0.0) << std::endl;
         }
 
         if (cv::waitKey(1) == 'q')
         {
             break;
         }
-        
     }
 
     cap.release();

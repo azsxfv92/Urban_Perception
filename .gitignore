@@ -40,5 +40,9 @@ Makefile
 .DS_Store
 *~
 
+#nsys
+*.nsys-rep
+*.ncu-rep
+
 # Docker
 .dockerignore

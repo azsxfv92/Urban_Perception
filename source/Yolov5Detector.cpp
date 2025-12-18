@@ -33,14 +33,14 @@ bool Yolov5Detector::loadEngine(const std::string& enginePath){
     file.read(engineData.data(), size);
     file.close();
 
-    runtime =nvinfer1::createInferRuntime(*gLogger);
+    runtime.reset(nvinfer1::createInferRuntime(*gLogger));
     if(!runtime) return false;
 
     // deserializeCudaEngine convert an encrypted file into an excutable model
-    engine = runtime->deserializeCudaEngine(engineData.data(), size);
+    engine.reset(runtime->deserializeCudaEngine(engineData.data(), size));
     if (!engine) return false;
 
-    context = engine->createExecutionContext();
+    context.reset(engine->createExecutionContext());
     if(!context) return false;
 
     size_t inputByteSize = 3 * INPUT_W * INPUT_H * sizeof(float);
