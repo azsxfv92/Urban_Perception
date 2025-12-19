@@ -5,6 +5,7 @@
 #include "NvInfer.h"
 #include <iostream>
 #include <memory>
+#include <condition_variable>
 
 // define TensorRT object delete rule
 struct TensorRTDeleter {
@@ -39,12 +40,19 @@ public:
     static const int INPUT_H = 640;
     static const int NUM_CLASSES = 80;
     static const int OUTPUT_SIZE = 25200 * (5+80);
-
+    static const int MAX_QUEUE_SIZE = 5;
     Yolov5Detector();
     ~Yolov5Detector();
 
     bool loadEngine(const std::string& enginePath);
     std::vector<Detection> detector(cv::Mat& img);
+
+    std::queue<cv::Mat> q;
+    std::mutex m;
+    std::condition_variable conva;
+
+    void push(cv::Mat frame);
+    cv::Mat pop();
 
 private:
     void preprocess(cv::Mat& img, float* hostDataBuffer);
