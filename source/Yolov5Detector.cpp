@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cuda_runtime_api.h>
 #include <set>
+#include <mutex>
+#include <thread>
 
 Yolov5Detector::Yolov5Detector(){
     gLogger = new Logger();
@@ -60,7 +62,7 @@ std::vector<Detection> Yolov5Detector::detector(cv::Mat& img){
     std::vector<Detection> result;
     std::vector<float> hostInputBuffer(3*INPUT_W*INPUT_H);
     preprocess(img, hostInputBuffer.data());
-    cudaMemcpy(buffer[0], hostInputBuffer.data(), 3*INPUT_W*INPUT_H, cudaMemcpyHostToDevice);
+    cudaMemcpy(buffer[0], hostInputBuffer.data(), 3*INPUT_W*INPUT_H*sizeof(float), cudaMemcpyHostToDevice);
 
     // check what the input and output name is
     const char* inputName = engine->getIOTensorName(0);
@@ -73,7 +75,7 @@ std::vector<Detection> Yolov5Detector::detector(cv::Mat& img){
     context->enqueueV3(0);
 
     std::vector<float> hostOutputBuffer(OUTPUT_SIZE);
-    cudaMemcpy(hostOutputBuffer.data(),buffer[1], OUTPUT_SIZE, cudaMemcpyDeviceToHost);
+    cudaMemcpy(hostOutputBuffer.data(),buffer[1], OUTPUT_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
     postprocess(hostOutputBuffer, result, img.cols, img.rows);
     
     return result;
@@ -104,7 +106,7 @@ float Yolov5Detector::computeIoU(const cv::Rect& box1, const cv::Rect& box2){
 
     if (x1>=x2 || y1>=y2) return 0.0f;
     float intersection = (float)(x2-x1)*(y2-y1);
-    float area1 = box1.width * box2.height;
+    float area1 = box1.width * box1.height;
     float area2 = box2.width * box2.height;
 
     float union_area = area1 + area2 - intersection;
@@ -186,4 +188,31 @@ void Yolov5Detector::postprocess(std::vector<float>& output, std::vector<Detecti
     for (int idx : indices){
         result.push_back(proposals[idx]);
     }
+}
+
+void Yolov5Detector::push(cv::Mat frame){
+    // create unique lock
+    std::unique_lock<std::mutex> lock(m);
+
+    // if queue is full, wait until somebody call
+    conva.wait(lock, [this]{return q.size() < MAX_QUEUE_SIZE;});
+
+    q.push(frame);
+    // wake up an wating thread
+    conva.notify_all();
+}
+
+cv::Mat Yolov5Detector::pop()
+{
+    std::unique_lock<std::mutex> uniq_lock(m);
+
+    conva.wait(uniq_lock, [this]{return (!q.empty());});
+    
+    cv::Mat frame = q.front();
+    q.pop();
+
+    // room is created, so call the creator
+    conva.notify_all();
+
+    return frame;
 }

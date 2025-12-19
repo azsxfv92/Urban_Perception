@@ -2,6 +2,65 @@
 #include <opencv2/opencv.hpp>
 #include "Yolov5Detector.h"
 #include <chrono>
+#include <thread>
+#include <nvtx3/nvToolsExt.h>
+
+void InputTask(Yolov5Detector* detector, cv::VideoCapture& cap){
+    // naming thread
+    nvtxNameOsThreadA(pthread_self(), "Input Thread");
+    while(true){
+        // start period
+        nvtxRangePushA("Camera Load & Push");
+        cv::Mat frame;
+        cap >> frame;
+        if(frame.empty()){
+            // if the video is finished, pass the empty frame to InferenceTask
+            detector->push(cv::Mat());
+            break;
+        } 
+        detector->push(frame);
+        //end period
+        nvtxRangePop();
+    }
+}
+
+void InferenceTask(Yolov5Detector* detector, cv::VideoWriter& writer){
+    nvtxNameOsThreadA(pthread_self(), "Inference Thread");
+    int frame_count = 0;
+    while(true){
+        cv::Mat frame;
+        frame = detector->pop();
+        if(frame.empty()) break;
+     
+        auto start = std::chrono::high_resolution_clock::now();
+        std::vector<Detection> result = detector->detector(frame);
+        auto end = std::chrono::high_resolution_clock::now();
+
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
+
+        for (const auto& det : result)
+        {
+            //rectangle(Imaege, Rect, Scalar(b,g,r), thickness, linetype, shift)
+            // Image : input images, Rect : range of rectangles, Scalar :color, thicknees: line thicknees 
+            cv::rectangle(frame, det.box, cv::Scalar(0,0,255), 2);
+            std::string label = std::to_string(det.classID) + ": " + 
+                                std::to_string((int)(det.confi * 100)) + "%";
+            cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 5), 
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
+        }        
+
+        nvtxRangePushA("Video Save");
+        writer.write(frame);
+        nvtxRangePop();
+
+        frame_count++;
+        if (frame_count % 30 == 0) {
+            std::cout << "Processing frame : " << frame_count
+                      << "| Time : " << duration << "ms"
+                      << "| FPS " << (duration > 0 ? 1000.0 / duration : 0.0) << std::endl;
+        }
+    }
+}
 
 
 int main(int argc, char** argv) {
@@ -43,51 +102,14 @@ int main(int argc, char** argv) {
         return -1;
     }
     
-    cv::Mat frame;
-    int frame_count = 0;
 
-    while (true)
-    {
-        cap >> frame;
-        if(frame.empty())
-        {
-            std::cout << "\nDone!" << std::endl;
-            break;
-        }
-
-        // time measurement
-        auto start = std::chrono::high_resolution_clock::now();
-
-        std::vector<Detection> result = detector.detector(frame);
-
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
-
-
-        for (const auto& det : result)
-        {
-            //rectangle(Imaege, Rect, Scalar(b,g,r), thickness, linetype, shift)
-            // Image : input images, Rect : range of rectangles, Scalar :color, thicknees: line thicknees 
-            cv::rectangle(frame, det.box, cv::Scalar(0,0,255), 2);
-            std::string label = std::to_string(det.classID) + ": " + 
-                                std::to_string((int)(det.confi * 100)) + "%";
-            cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 5), 
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
-        }        
-
-        writer.write(frame);
-        frame_count++;
-        if (frame_count % 30 == 0) {
-            std::cout << "Processing frame : " << frame_count
-                      << "| Time : " << duration << "ms"
-                      << "| FPS " << (duration > 0 ? 1000.0 / duration : 0.0) << std::endl;
-        }
-
-        if (cv::waitKey(1) == 'q')
-        {
-            break;
-        }
-    }
+    ///// std::ref() is used to pass the parameter as reference(&)
+    // creat thread
+    std::thread input_thread(InputTask, &detector, std::ref(cap));
+    std::thread infer_thread(InferenceTask, &detector, std::ref(writer));
+    //start thread
+    input_thread.join();
+    infer_thread.join();
 
     cap.release();
     cv::destroyAllWindows();

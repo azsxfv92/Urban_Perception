@@ -5,6 +5,7 @@
 #include "NvInfer.h"
 #include <iostream>
 #include <memory>
+#include <condition_variable>
 
 struct TensorRTDeleter {
     template <typename T>
@@ -37,7 +38,7 @@ public:
     static const int INPUT_H = 640;
     static const int NUM_CLASSES = 80;
     static const int OUTPUT_SIZE = 25200 * (5+80);
-
+    static const int MAX_QUEUE_SIZE = 5;
     Yolov5Detector();
     ~Yolov5Detector();
 
@@ -109,6 +110,13 @@ public:
     //     return result;
     // }
 
+
+    std::queue<cv::Mat> q;
+    std::mutex m;
+    std::condition_variable conva;
+
+    void push(cv::Mat frame);
+    cv::Mat pop();
 
 private:
     void preprocess(cv::Mat& img, float* hostDataBuffer);
