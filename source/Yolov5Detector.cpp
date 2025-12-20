@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <cuda_runtime_api.h>
 #include <set>
-#include <mutex>
-#include <thread>
 
 Yolov5Detector::Yolov5Detector(){
     gLogger = new Logger();
@@ -188,31 +186,4 @@ void Yolov5Detector::postprocess(std::vector<float>& output, std::vector<Detecti
     for (int idx : indices){
         result.push_back(proposals[idx]);
     }
-}
-
-void Yolov5Detector::push(cv::Mat frame){
-    // create unique lock
-    std::unique_lock<std::mutex> lock(m);
-
-    // if queue is full, wait until somebody call
-    conva.wait(lock, [this]{return q.size() < MAX_QUEUE_SIZE;});
-
-    q.push(frame);
-    // wake up an wating thread
-    conva.notify_all();
-}
-
-cv::Mat Yolov5Detector::pop()
-{
-    std::unique_lock<std::mutex> uniq_lock(m);
-
-    conva.wait(uniq_lock, [this]{return (!q.empty());});
-    
-    cv::Mat frame = q.front();
-    q.pop();
-
-    // room is created, so call the creator
-    conva.notify_all();
-
-    return frame;
 }

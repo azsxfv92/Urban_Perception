@@ -4,8 +4,9 @@
 #include <chrono>
 #include <thread>
 #include <nvtx3/nvToolsExt.h>
+#include "SafeQueue.h"
 
-void InputTask(Yolov5Detector* detector, cv::VideoCapture& cap){
+void InputTask(SafeQueue<cv::Mat>& q_in, cv::VideoCapture& cap){
     // naming thread
     nvtxNameOsThreadA(pthread_self(), "Input Thread");
     while(true){
@@ -15,31 +16,36 @@ void InputTask(Yolov5Detector* detector, cv::VideoCapture& cap){
         cap >> frame;
         if(frame.empty()){
             // if the video is finished, pass the empty frame to InferenceTask
-            detector->push(cv::Mat());
+            q_in.push(cv::Mat());
             break;
         } 
-        detector->push(frame);
+        q_in.push(frame);
         //end period
         nvtxRangePop();
     }
 }
 
-void InferenceTask(Yolov5Detector* detector, cv::VideoWriter& writer){
+void InferenceTask(Yolov5Detector& detector, SafeQueue<cv::Mat>& q_in, SafeQueue<cv::Mat>& q_out){
     nvtxNameOsThreadA(pthread_self(), "Inference Thread");
     int frame_count = 0;
     while(true){
-        cv::Mat frame;
-        frame = detector->pop();
-        if(frame.empty()) break;
-     
+        // pop the frame, which is added in InputTask 
+        cv::Mat frame = q_in.pop();
+
+        if(frame.empty()) {
+            q_out.push(cv::Mat());
+            break;
+        }
+
+        nvtxRangePushA("Perform inference");
         auto start = std::chrono::high_resolution_clock::now();
-        std::vector<Detection> result = detector->detector(frame);
+        std::vector<Detection> result = detector.detector(frame);
         auto end = std::chrono::high_resolution_clock::now();
+        nvtxRangePop();
 
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count();
-
-        for (const auto& det : result)
-        {
+       
+        for (const auto& det : result){
             //rectangle(Imaege, Rect, Scalar(b,g,r), thickness, linetype, shift)
             // Image : input images, Rect : range of rectangles, Scalar :color, thicknees: line thicknees 
             cv::rectangle(frame, det.box, cv::Scalar(0,0,255), 2);
@@ -47,18 +53,35 @@ void InferenceTask(Yolov5Detector* detector, cv::VideoWriter& writer){
                                 std::to_string((int)(det.confi * 100)) + "%";
             cv::putText(frame, label, cv::Point(det.box.x, det.box.y - 5), 
                         cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
-        }        
+        }
 
-        nvtxRangePushA("Video Save");
+        if (frame_count % 30 == 0) {
+        std::cout << "Processing frame : " << frame_count
+                    << "| Time : " << duration << "ms"
+                    << "| FPS " << (duration > 0 ? 1000.0 / duration : 0.0) << std::endl;
+        }
+        frame_count++;
+
+        //push frame to output q to share it to SaveTask
+        q_out.push(frame);
+
+    }
+
+}
+
+
+void SaveTask(SafeQueue<cv::Mat>& q_out, cv::VideoWriter& writer){
+    nvtxNameOsThreadA(pthread_self(), "SaveTask Thread");
+    while(true){
+        cv::Mat frame = q_out.pop();
+
+        if(frame.empty()){
+            break;
+        }
+
+        nvtxRangePushA("Save Video");
         writer.write(frame);
         nvtxRangePop();
-
-        frame_count++;
-        if (frame_count % 30 == 0) {
-            std::cout << "Processing frame : " << frame_count
-                      << "| Time : " << duration << "ms"
-                      << "| FPS " << (duration > 0 ? 1000.0 / duration : 0.0) << std::endl;
-        }
     }
 }
 
@@ -101,15 +124,19 @@ int main(int argc, char** argv) {
         std::cerr << " Can not create result.mp4 file" << std::endl;
         return -1;
     }
-    
+
+    SafeQueue<cv::Mat> input_q(5);
+    SafeQueue<cv::Mat> output_q(5);
 
     ///// std::ref() is used to pass the parameter as reference(&)
     // creat thread
-    std::thread input_thread(InputTask, &detector, std::ref(cap));
-    std::thread infer_thread(InferenceTask, &detector, std::ref(writer));
+    std::thread input_thread(InputTask, std::ref(input_q), std::ref(cap));
+    std::thread infer_thread(InferenceTask, std::ref(detector), std::ref(input_q), std::ref(output_q));
+    std::thread save_thread(SaveTask, std::ref(output_q), std::ref(writer));
     //start thread
     input_thread.join();
     infer_thread.join();
+    save_thread.join();
 
     cap.release();
     cv::destroyAllWindows();
