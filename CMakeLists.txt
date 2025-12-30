@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
-project(Urban_Perception)
+project(Urban_Perception LANGUAGES CXX CUDA)
+
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -16,7 +17,11 @@ include_directories(
     /usr/include/aarch64-linux-gnu # TensorRT 헤더 경로
 )
 
-add_executable(Urban_Perception source/main.cpp source/Yolov5Detector.cpp)
+add_executable(Urban_Perception 
+    source/main.cpp 
+    source/Yolov5Detector.cpp
+    source/preprocess.cu    
+)
 
 target_link_libraries(Urban_Perception
     ${OpenCV_LIBS}

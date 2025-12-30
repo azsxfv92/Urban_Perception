@@ -46,3 +46,9 @@ Makefile
 
 # Docker
 .dockerignore
+
+#script
+*.sh
+
+#git
+*.gitignore

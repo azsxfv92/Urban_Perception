@@ -6,14 +6,27 @@
 
 Yolov5Detector::Yolov5Detector(){
     gLogger = new Logger();
-    buffer[0] = nullptr;
-    buffer[1] = nullptr;
+
+    for (int i = 0; i < 2; i++){
+        cudaStreamCreate(&streams[i]);  // Create CUDA stream first
+        int input_size = 3 * INPUT_W * INPUT_H * sizeof(float);
+        int output_size = OUTPUT_SIZE * sizeof(float);
+
+        //allocate GPU memory, 0 is input, 1 is output
+        cudaMalloc(&buffer[i][0], input_size);
+        cudaMalloc(&buffer[i][1], output_size);
+
+        host_outputs[i].resize(OUTPUT_SIZE);
+    }
 }
 
 Yolov5Detector::~Yolov5Detector() {
     if (gLogger) delete gLogger;
-    cudaFree(buffer[0]);
-    cudaFree(buffer[1]);
+    for (int i = 0; i < 2; i++){
+        cudaStreamDestroy(streams[i]);
+        cudaFree(buffer[i][0]);
+        cudaFree(buffer[i][1]);
+    }
 }
 
 bool Yolov5Detector::loadEngine(const std::string& enginePath){
@@ -43,38 +56,51 @@ bool Yolov5Detector::loadEngine(const std::string& enginePath){
     context.reset(engine->createExecutionContext());
     if(!context) return false;
 
-    size_t inputByteSize = 3 * INPUT_W * INPUT_H * sizeof(float);
-    size_t outputByteSize = OUTPUT_SIZE * sizeof(float);
-    // cudaMalloc asign memory and return the asigned address through the first parameter
-    // &buffers[0] is an address to be asigned
-    // inputByteSize is a size of memory to be asigned
-    ///// GPU를 사용하기위해 GPU 메모리를 선점
-    cudaMalloc(&buffer[0], inputByteSize);
-    cudaMalloc(&buffer[1], outputByteSize);
-    
+    // Memory is already allocated in constructor, no need to allocate again
+
     return true;
 }
 
-
-std::vector<Detection> Yolov5Detector::detector(cv::Mat& img){
+std::vector<Detection> Yolov5Detector::detect_gpu(void* d_input, int width, int height){
     std::vector<Detection> result;
-    std::vector<float> hostInputBuffer(3*INPUT_W*INPUT_H);
-    preprocess(img, hostInputBuffer.data());
-    cudaMemcpy(buffer[0], hostInputBuffer.data(), 3*INPUT_W*INPUT_H*sizeof(float), cudaMemcpyHostToDevice);
 
-    // check what the input and output name is
+    // pre-precessing was done in kernel
+    cudaMemcpyAsync(buffer[0], d_input, 3*INPUT_W*INPUT_H*sizeof(float), cudaMemcpyDeviceToDevice, 0);
     const char* inputName = engine->getIOTensorName(0);
     const char* outputName = engine->getIOTensorName(1);
-    // connect buffer and tensor name
+
     context->setTensorAddress(inputName, buffer[0]);
     context->setTensorAddress(outputName, buffer[1]);
-    //inference
-    // "0" means using default stream
+
     context->enqueueV3(0);
 
     std::vector<float> hostOutputBuffer(OUTPUT_SIZE);
-    cudaMemcpy(hostOutputBuffer.data(),buffer[1], OUTPUT_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
-    postprocess(hostOutputBuffer, result, img.cols, img.rows);
+    cudaMemcpyAsync(hostOutputBuffer.data(), buffer[1], OUTPUT_SIZE*sizeof(float), cudaMemcpyDeviceToHost, 0);
+    // cudaMemcpyAsync doesn't wait GPU copy task, so watting for GPU is needed
+    cudaStreamSynchronize(0);
+    postprocess(hostOutputBuffer, result, width, height);
+
+    return result;
+}   
+
+
+void Yolov5Detector::enqueue_gpu(int idx, void* d_input, int width, int height){
+    cudaMemcpyAsync(buffer[idx][0], d_input, 3* INPUT_W * INPUT_H * sizeof(float), cudaMemcpyDeviceToDevice, streams[idx]);
+
+    context->setTensorAddress(engine->getIOTensorName(0), buffer[idx][0]);
+    context->setTensorAddress(engine->getIOTensorName(1), buffer[idx][1]);
+
+    context->enqueueV3(streams[idx]);
+
+    cudaMemcpyAsync(host_outputs[idx].data(), buffer[idx][1], OUTPUT_SIZE * sizeof(float), cudaMemcpyDeviceToHost, streams[idx]);
+}
+
+std::vector<Detection> Yolov5Detector::postprocess_cpu(int idx, int width, int height){
+    std::vector<Detection> result;
+
+    cudaStreamSynchronize(streams[idx]);
+
+    postprocess(host_outputs[idx], result, width, height);
     
     return result;
 }
@@ -148,9 +174,9 @@ void Yolov5Detector::postprocess(std::vector<float>& output, std::vector<Detecti
             det.confi = final_score;
             
             
-            if (det.classID==9){
-                std::cout << "Detected class ID: " << max_class_id << " with score: " << final_score << std::endl;
-            }
+            // if (det.classID==9){
+            //     std::cout << "Detected class ID: " << max_class_id << " with score: " << final_score << std::endl;
+            // }
             float cx = data[0];
             float cy = data[1];
             float w = data[2];
